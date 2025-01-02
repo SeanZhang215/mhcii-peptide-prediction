@@ -99,20 +99,6 @@ mhcii-peptide-prediction/
 └── README.md
 ```
 
-
-## Citation
-
-If you use this pipeline, please cite:
-
-For netMHCIIpan-4.3:
-```
-Accurate prediction of HLA class II antigen presentation across all loci using tailored data acquisition and refined machine learning
-Jonas B. Nilsson, Saghar Kaabinejadian, Hooman Yari, Michel G. D. Kester, Peter van Balen, William H. Hildebrand and Morten Nielsen
-Science Advances, 24 Nov 2023
-https://www.science.org/doi/10.1126/sciadv.adj6367
-```
-
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
