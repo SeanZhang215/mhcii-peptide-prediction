@@ -264,3 +264,58 @@ class NetMHCIIPredictor:
         """
         filename = f"{sample_id}_results.{mode}"
         return self.file_manager.safe_load(filename, mode)
+    
+    def process_spark_results(
+        self,
+        spark: SparkSession,
+        results_path: str
+    ) -> DataFrame:
+        """
+        Process prediction results using Spark.
+        
+        Args:
+            spark: SparkSession instance
+            results_path: Path to results directory
+            
+        Returns:
+            Spark DataFrame with processed results
+        """
+        from .utils import SparkManager
+        
+        # Read all results
+        results_df = SparkManager.read_prediction_results(
+            spark,
+            os.path.join(results_path, "*_results.csv")
+        )
+        
+        # Add default transformations
+        results_df = (results_df
+            .withColumn("peptide_length", length(col("Peptide")))
+            .withColumn("is_strong_binder", col("%Rank_EL") < 2)
+            .withColumn("is_weak_binder", 
+                (col("%Rank_EL") >= 2) & (col("%Rank_EL") < 10))
+        )
+        
+        return results_df
+
+    def get_binding_stats(
+        self,
+        spark_df: DataFrame
+    ) -> Dict[str, float]:
+        """Get binding statistics from Spark DataFrame."""
+        stats = (spark_df
+            .agg(
+                count("*").alias("total"),
+                mean(col("is_strong_binder")).alias("strong_binder_rate"),
+                mean(col("is_weak_binder")).alias("weak_binder_rate"),
+                percentile_approx("peptide_length", 0.5).alias("median_length")
+            )
+            .collect()[0]
+        )
+        
+        return {
+            "total_predictions": stats["total"],
+            "strong_binder_rate": float(stats["strong_binder_rate"]),
+            "weak_binder_rate": float(stats["weak_binder_rate"]),
+            "median_peptide_length": float(stats["median_length"])
+        }

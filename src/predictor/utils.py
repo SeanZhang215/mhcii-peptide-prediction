@@ -22,6 +22,13 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import psutil
 from tqdm.auto import tqdm
 
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.types import *
+from pyspark.sql.functions import (
+    col, explode, array, collect_list, input_file_name,
+    regexp_extract, count, when, min as spark_min
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -307,3 +314,99 @@ class ProgressTracker:
         )
         if stats['failed'] > 0:
             logger.warning(f"Failed items: {stats['failed']}")
+
+class SparkManager:
+    """Manages Spark operations and configurations."""
+    
+    @staticmethod
+    def create_spark_session(
+        app_name: str = "MHC_Predictor",
+        memory_gb: int = 8
+    ) -> SparkSession:
+        """Create a configured Spark session."""
+        return (SparkSession.builder
+            .appName(app_name)
+            .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+            .config("spark.driver.memory", f"{memory_gb}g")
+            .config("spark.sql.legacy.timeParserPolicy", "LEGACY")
+            .getOrCreate())
+
+    @staticmethod
+    def get_prediction_schema() -> StructType:
+        """Get schema for prediction results."""
+        return StructType([
+            StructField("Allele", StringType(), True),
+            StructField("Pos", IntegerType(), True),
+            StructField("MHC", StringType(), True),
+            StructField("Peptide", StringType(), True),
+            StructField("Of", IntegerType(), True),
+            StructField("Core", StringType(), True),
+            StructField("Core_Rel", FloatType(), True),
+            StructField("Inverted", IntegerType(), True),
+            StructField("Identity", StringType(), True),
+            StructField("Score_EL", FloatType(), True),
+            StructField("%Rank_EL", FloatType(), True),
+            StructField("Exp_Bind", StringType(), True),
+            StructField("Score_BA", FloatType(), True),
+            StructField("%Rank_BA", FloatType(), True),
+            StructField("Affinity(nM)", FloatType(), True),
+            StructField("BindLevel", StringType(), True),
+            StructField("sample_id", StringType(), True),
+            StructField("allele_extra", StringType(), True),
+            StructField("raw_peptides", StringType(), True),
+            StructField("inverted_manual", IntegerType(), True),
+            StructField("flipped", StringType(), True)
+        ])
+
+    @staticmethod
+    def copy_from_volume(
+        spark: SparkSession,
+        volume_path: str,
+        local_path: str,
+        file_pattern: str = "*"
+    ) -> None:
+        """Copy files from volume to local disk."""
+        os.makedirs(local_path, exist_ok=True)
+        
+        df = spark.read.format("binaryFile").load(
+            os.path.join(volume_path, file_pattern)
+        )
+        df = df.withColumn("file_name", input_file_name())
+        
+        for file in df.collect():
+            source_path = file.file_name
+            file_name = os.path.basename(source_path)
+            dest_path = os.path.join(local_path, file_name)
+            
+            with open(dest_path, 'wb') as f:
+                f.write(file.content)
+            
+            logger.info(f"Copied {source_path} to {dest_path}")
+
+    @staticmethod
+    def read_prediction_results(
+        spark: SparkSession,
+        path: str,
+        schema: Optional[StructType] = None
+    ) -> DataFrame:
+        """Read prediction results using Spark."""
+        schema = schema or SparkManager.get_prediction_schema()
+        
+        return (spark.read
+            .option("header", True)
+            .option("mode", "PERMISSIVE")
+            .option("maxCharsPerColumn", 100000)
+            .schema(schema)
+            .csv(path))
+
+    @staticmethod
+    def save_prediction_results(
+        df: DataFrame,
+        path: str,
+        mode: str = "overwrite"
+    ) -> None:
+        """Save prediction results using Spark."""
+        (df.write
+            .mode(mode)
+            .option("header", True)
+            .csv(path))
